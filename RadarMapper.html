@@ -839,6 +839,7 @@
                 <option value="basic">Basic: radar + popups</option>
                 <option value="simple">Simple: radar + popups + search (name or description)</option>
                 <option value="advanced">Advanced: radar + popups + search and filtering</option>
+                <option value="direct">Direct: clicks open directly in a new tab</option>
               </select>
               <label>HTML export filename</label>
               <input id="cfgHtmlName" value="clickable_radar.html">
@@ -2584,7 +2585,8 @@ function updateExportPreview(){
   const experienceLabels = {
     basic:'Basic',
     simple:'Simple',
-    advanced:'Advanced'
+    advanced:'Advanced',
+    direct:'Direct'
   };
   q('previewTitle').textContent = q('cfgExportTitle').value || 'Clickable radar';
   q('previewExportMode').textContent = modeLabels[mode] || modeLabels.standalone;
@@ -2599,7 +2601,7 @@ function normalizeExportExperience(value){
   const raw=String(value||'').trim().toLowerCase();
   if(raw==='visual') return 'basic';
   if(raw==='interface') return 'advanced';
-  if(raw==='basic' || raw==='simple' || raw==='advanced') return raw;
+  if(raw==='basic' || raw==='simple' || raw==='advanced' || raw==='direct') return raw;
   return 'basic';
 }
 function getExportExperience(){ const input=q('cfgExportExperience'); return normalizeExportExperience(input && input.value); }
@@ -4037,11 +4039,33 @@ function exportPopupScript(scopeSelector='.radar', popupSelector='#popup', hotsp
 })();
 <\/scr${''}ipt>`;
 }
+function exportDirectScript(scopeSelector='.radar', hotspotSelector='.hotspot'){
+  return `<scr${''}ipt>
+(function(){
+  const root=document.querySelector('${scopeSelector}');
+  if(!root) return;
+  const openZone=hotspot=>{
+    const url=(hotspot.dataset.url||hotspot.getAttribute('href')||'').trim();
+    if(!url || url==='#') return;
+    window.open(url,'_blank','noopener');
+  };
+  root.querySelectorAll('${hotspotSelector}').forEach(hotspot=>{
+    // Native anchors already open in a new tab; only wire clicks for non-anchor hotspots.
+    if(hotspot.tagName.toLowerCase()!=='a'){
+      hotspot.addEventListener('click',event=>{ event.preventDefault(); openZone(hotspot); });
+    }
+    hotspot.addEventListener('keydown',event=>{
+      if(event.key==='Enter' || event.key===' '){ event.preventDefault(); openZone(hotspot); }
+    });
+  });
+})();
+<\/scr${''}ipt>`;
+}
 function buildStandaloneHtml(){
   const title=escapeHtml(q('cfgExportTitle').value || 'Clickable radar');
   const experience=getExportExperience();
-  const body=experience==='basic'
-    ? buildCmsSnippet('radar', 'layer', true)
+  const body=(experience==='basic' || experience==='direct')
+    ? buildCmsSnippet('radar', 'layer', true, experience)
     : buildInterfaceSnippet('radarmapper-interface', 'rm-layer', true, experience);
   const lang=escapeHtml((document.documentElement.lang||'en').slice(0,8));
   return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0d6f86"><title>${title}</title></head><body style="margin:0;background:#fff;overflow-x:hidden;-webkit-text-size-adjust:100%"><h1 style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden">${title}</h1>${body}</body></html>`;
@@ -4191,7 +4215,7 @@ function buildReallyReallyNiceSnippet(containerClass='radarmapper-wow', layerCla
   const body=`<div class="${containerClass}" data-radarmapper-embed><div class="rrn-shell"><div class="rrn-head"><div><h2 class="rrn-title">${title}</h2><p class="rrn-sub">Search with <kbd>/</kbd>, filter by category, and jump directly to any ${escapeHtml(entity.lower)}.</p></div><div class="rrn-kpis"><div class="rrn-kpi"><b data-rrn-visible>0</b><span>Visible</span></div><div class="rrn-kpi"><b data-rrn-total>0</b><span>Total zones</span></div>${hasAnyUrl?'<div class="rrn-kpi"><b data-rrn-with-url>0</b><span>With URL</span></div>':''}</div></div><div class="rrn-main"><aside class="rrn-panel"><div class="rrn-tools"><input class="rrn-search" type="search" data-rrn-search aria-label="Search ${escapeHtml(entity.lower)}" placeholder="Search ${escapeHtml(entity.lower)}, description, category, keywords..."><div class="rrn-row">${hasAnyUrl?'<label class="rrn-toggle"><input data-rrn-url-only type="checkbox"> Only with URL</label>':''}<button class="rrn-btn" data-rrn-reset type="button">Reset</button></div><div class="rrn-facetbox"><label>Categories</label><div class="rrn-chiprow" data-rrn-categories></div></div><div class="rrn-selected">Category: <strong data-rrn-selected-category>All</strong></div><div class="rrn-results" data-rrn-results></div></div></aside><div class="rrn-canvas"><img src="${IMAGE_DATA}" alt="${title}"><svg class="${layerClass}" viewBox="0 0 ${IMG_W} ${IMG_H}" preserveAspectRatio="none">${spots}</svg><div id="${popupId}" class="rm-popup" hidden></div></div></div></div></div>`;
   return `<style>${css}</style>${body}${includeScript ? exportPopupScript(canvasSelector, `#${popupId}`, '.rrn-hotspot', cfg)+exportReallyNiceScript(rootSelector, '.rrn-hotspot', entity.singular) : ''}`;
 }
-function buildCmsSnippet(containerClass='rm-radar', layerClass='rm-layer', includeScript=true){
+function buildCmsSnippet(containerClass='rm-radar', layerClass='rm-layer', includeScript=true, experience='basic'){
   const isStandaloneClass=containerClass==='radar';
   const prefix=isStandaloneClass ? '' : 'rm';
   const containerSelector=isStandaloneClass ? '.radar' : `.${containerClass}`;
@@ -4210,7 +4234,12 @@ function buildCmsSnippet(containerClass='rm-radar', layerClass='rm-layer', inclu
   const svg = isStandaloneClass ? svgMarkupForExport() : svgMarkupForCms(prefix);
   const popupClass = isStandaloneClass ? '' : ' class="rm-popup"';
   const popupSelector = isStandaloneClass ? '#popup' : `#${popupId}`;
-  return `<style>${css}${responsiveCss}</style><div class="${containerClass}" data-radarmapper-embed><img src="${IMAGE_DATA}" alt="${escapeHtml(q('cfgExportTitle').value || 'Clickable radar')}"><svg class="${layerClass}" viewBox="0 0 ${IMG_W} ${IMG_H}" preserveAspectRatio="none">${svg}</svg><div id="${popupId}"${popupClass} hidden></div></div>${includeScript ? exportPopupScript(containerSelector, popupSelector, hotspotSelector, cfg) : ''}`;
+  const isDirect = experience==='direct';
+  const popupMarkup = isDirect ? '' : `<div id="${popupId}"${popupClass} hidden></div>`;
+  const script = isDirect
+    ? exportDirectScript(containerSelector, hotspotSelector)
+    : exportPopupScript(containerSelector, popupSelector, hotspotSelector, cfg);
+  return `<style>${css}${responsiveCss}</style><div class="${containerClass}" data-radarmapper-embed><img src="${IMAGE_DATA}" alt="${escapeHtml(q('cfgExportTitle').value || 'Clickable radar')}"><svg class="${layerClass}" viewBox="0 0 ${IMG_W} ${IMG_H}" preserveAspectRatio="none">${svg}</svg>${popupMarkup}</div>${includeScript ? script : ''}`;
 }
 function imageMapArea(z){
   const name=escapeHtml(z.name||z.id);
@@ -4242,7 +4271,7 @@ function buildExportHtml(mode=getExportMode()){
   const experience=getExportExperience();
   try{
     if(mode==='reallynice') return buildReallyReallyNiceSnippet('radarmapper-wow', 'rrn-layer', true);
-    if(mode==='snippet') return experience==='basic' ? buildCmsSnippet('radarmapper-embed', 'rm-layer', true) : buildInterfaceSnippet('radarmapper-embed', 'rm-layer', true, experience);
+    if(mode==='snippet') return (experience==='basic' || experience==='direct') ? buildCmsSnippet('radarmapper-embed', 'rm-layer', true, experience) : buildInterfaceSnippet('radarmapper-embed', 'rm-layer', true, experience);
     if(mode==='iframe') return buildIframeSnippet();
     if(mode==='imagemap') return buildImageMapSnippet();
     return buildStandaloneHtml();
