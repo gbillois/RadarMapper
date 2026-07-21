@@ -955,6 +955,7 @@
         <select id="aiProvider">
           <option value="anthropic">Anthropic</option>
           <option value="openai">OpenAI</option>
+          <option value="openrouter">OpenRouter</option>
           <option value="azure">Azure OpenAI</option>
         </select>
         <label>Model</label>
@@ -2783,6 +2784,12 @@ const AI_MODEL_CATALOG = {
     {value:'gpt-4o', label:'GPT-4o'},
     {value:'gpt-4o-mini', label:'GPT-4o mini'}
   ],
+  openrouter:[
+    {value:'openrouter/auto', label:'OpenRouter Auto'},
+    {value:'~openai/gpt-latest', label:'OpenAI latest alias'},
+    {value:'anthropic/claude-sonnet-4.6', label:'Claude Sonnet 4.6'},
+    {value:'google/gemini-2.5-pro', label:'Gemini 2.5 Pro'}
+  ],
   azure:[
     {value:'gpt-5.5', label:'GPT-5.5'},
     {value:'gpt-5.5-pro', label:'GPT-5.5 pro'},
@@ -2986,11 +2993,13 @@ async function callOpenAiLike(cfg,prompt){
     {type:'image_url',image_url:{url:IMAGE_DATA}}
   ]}];
   const isAzure=cfg.provider==='azure';
+  const isOpenRouter=cfg.provider==='openrouter';
   const url=isAzure
     ?`${cfg.azureEndpoint}/openai/deployments/${encodeURIComponent(cfg.azureDeployment)}/chat/completions?api-version=${encodeURIComponent(cfg.azureVersion)}`
-    :'https://api.openai.com/v1/chat/completions';
+    :(isOpenRouter?'https://openrouter.ai/api/v1/chat/completions':'https://api.openai.com/v1/chat/completions');
   const headers={'Content-Type':'application/json'};
   headers[isAzure?'api-key':'Authorization']=isAzure?cfg.apiKey:`Bearer ${cfg.apiKey}`;
+  if(isOpenRouter){ headers['HTTP-Referer']=location.origin; headers['X-OpenRouter-Title']='RadarMapper'; }
   const modelName=isAzure?cfg.azureDeployment:cfg.model;
   const supportsTemperature=!/^gpt-5/i.test(modelName)&&!/^o\d/i.test(modelName);
   const supportsJsonMode=!/^o1/i.test(modelName);
@@ -3013,11 +3022,13 @@ async function callOpenAiLike(cfg,prompt){
 async function testOpenAiLike(cfg){
   const messages=[{role:'user',content:'Reply with OK only.'}];
   const isAzure=cfg.provider==='azure';
+  const isOpenRouter=cfg.provider==='openrouter';
   const url=isAzure
     ?`${cfg.azureEndpoint}/openai/deployments/${encodeURIComponent(cfg.azureDeployment)}/chat/completions?api-version=${encodeURIComponent(cfg.azureVersion)}`
-    :'https://api.openai.com/v1/chat/completions';
+    :(isOpenRouter?'https://openrouter.ai/api/v1/chat/completions':'https://api.openai.com/v1/chat/completions');
   const headers={'Content-Type':'application/json'};
   headers[isAzure?'api-key':'Authorization']=isAzure?cfg.apiKey:`Bearer ${cfg.apiKey}`;
+  if(isOpenRouter){ headers['HTTP-Referer']=location.origin; headers['X-OpenRouter-Title']='RadarMapper'; }
   const modelName=isAzure?cfg.azureDeployment:cfg.model;
   const supportsTemperature=!/^gpt-5/i.test(modelName)&&!/^o\d/i.test(modelName);
   const body=isAzure?{messages}:{model:cfg.model,messages};
@@ -3107,6 +3118,16 @@ ${list}`;
 }
 async function callOpenAiEnrichBatch(cfg,names){
   const prompt=enrichBatchPrompt(names);
+  if(cfg.provider==='openrouter'){
+    const res=await fetch('https://openrouter.ai/api/v1/chat/completions',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${cfg.apiKey}`,'HTTP-Referer':location.origin,'X-OpenRouter-Title':'RadarMapper'},
+      body:JSON.stringify({model:cfg.model,messages:[{role:'user',content:prompt}],response_format:{type:'json_object'},plugins:[{id:'web',max_results:10}],max_tokens:8000})
+    });
+    if(!res.ok) throw await extractApiError(res);
+    const data=await res.json();
+    return (((data.choices||[])[0]||{}).message||{}).content||'';
+  }
   const res=await fetch('https://api.openai.com/v1/responses',{
     method:'POST',
     headers:{
@@ -3162,7 +3183,7 @@ async function enrichCsvViaWebSearch(cfg,onProgress){
     appendLlmInAppTrace('CSV enrichment skipped: Azure OpenAI does not expose a standard web_search tool. Use Anthropic or OpenAI direct.');
     return {updated:0,verified:0,total:0,skipped:'azure'};
   }
-  if(cfg.provider!=='anthropic' && cfg.provider!=='openai'){
+  if(cfg.provider!=='anthropic' && cfg.provider!=='openai' && cfg.provider!=='openrouter'){
     appendLlmInAppTrace(`CSV enrichment skipped: provider "${cfg.provider}" is not supported for web search.`);
     return {updated:0,verified:0,total:0,skipped:cfg.provider};
   }
@@ -4316,7 +4337,7 @@ q('enrichCsvBtn').onclick=async()=>{
   const cfg=getAiConfig();
   if(!cfg.apiKey || !cfg.model){ setEnrichStatus('missing provider/model/API key.'); alert('Configure the LLM provider, model and API key first.'); return; }
   if(cfg.provider==='azure'){ setEnrichStatus('Azure OpenAI does not expose web search.'); alert('Dataset enrichment requires Anthropic or OpenAI (direct). Azure OpenAI does not expose a standard web_search tool.'); return; }
-  if(cfg.provider!=='anthropic' && cfg.provider!=='openai'){ setEnrichStatus(`provider "${cfg.provider}" not supported.`); alert(`Dataset enrichment requires Anthropic or OpenAI. Current provider: ${cfg.provider}.`); return; }
+  if(cfg.provider!=='anthropic' && cfg.provider!=='openai' && cfg.provider!=='openrouter'){ setEnrichStatus(`provider "${cfg.provider}" not supported.`); alert(`Dataset enrichment requires Anthropic, OpenAI or OpenRouter. Current provider: ${cfg.provider}.`); return; }
   if(!Array.isArray(startupRecords) || !startupRecords.length){ setEnrichStatus('no dataset available.'); alert('No dataset available yet. Import one, or run LLM detection first so the list is built from the radar image.'); return; }
   try{
     q('enrichCsvBtn').disabled=true;
